@@ -1,0 +1,280 @@
+import cv2                  # OpenCV for image processing
+import os                   # OS module for file & folder handling
+import numpy as np          # NumPy for array operations
+
+# ---------------- DATASET PATH ---------------- #
+
+# Path where emotion detection dataset is stored
+# Example folders: angry, disgust, fear, happy, neutral, sad, surprise
+data_path = r'C:\open cv\Resource\emotion_detection\train'
+
+# Get list of emotion folders
+categories = os.listdir(data_path)
+print(categories)
+
+# ---------------- IMAGE SETTINGS ---------------- #
+
+# Resize all images to 100x100
+img_size = 100
+
+# Lists to store image data and labels
+data = []
+target = []
+
+# ---------------- READ IMAGES ---------------- #
+
+# Loop through each emotion folder with index
+# index → numeric label (0,1,2...)
+# category → emotion name
+for index, category in enumerate(categories):
+
+    # Full path to emotion folder
+    folder_path = os.path.join(data_path, category)
+
+    # Get all image names in the folder
+    img_names = os.listdir(folder_path)
+
+    # Loop through images
+    for img_name in img_names:
+
+        img_path = os.path.join(folder_path, img_name)
+
+        # Read image
+        img = cv2.imread(img_path)
+
+        # Skip unreadable images
+        if img is None:
+            continue
+
+        try:
+            # Convert to grayscale (emotion works better in grayscale)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+            # Resize image
+            resized = cv2.resize(gray, (img_size, img_size))
+
+            # Store image data
+            data.append(resized)
+
+            # Store label (emotion index)
+            target.append(index)
+
+        except Exception as e:
+            print("Exception:", e)
+
+# ---------------- CONVERT TO NUMPY ---------------- #
+
+# Convert to NumPy array & normalize
+data = np.array(data) / 255.0
+
+# Reshape for CNN: (samples, height, width, channel)
+data = data.reshape(data.shape[0], img_size, img_size, 1)
+
+# Convert target to NumPy
+target = np.array(target)
+
+# ---------------- ONE-HOT ENCODING ---------------- #
+
+from keras.utils import to_categorical
+target = to_categorical(target)
+
+# ---------------- SAVE DATA ---------------- #
+
+np.save('emotion_data.npy', data)
+np.save('emotion_target.npy', target)
+
+#CNN Training
+
+# Image
+#  → Conv2D
+#  → ReLU
+#  → MaxPooling
+#  → Conv2D
+#  → ReLU
+#  → MaxPooling
+#  → Flatten
+#  → Dense
+#  → Output
+
+
+import numpy as np
+
+# Load preprocessed emotion image data
+data = np.load('emotion_data.npy')
+
+# Load emotion labels (one-hot encoded)
+target = np.load('emotion_target.npy')
+
+# ---------------- IMPORT KERAS MODULES ---------------- #
+
+from keras.models import Sequential                #Sequential is a model where layers are added one after another in order.
+from keras.layers import Conv2D                    #Conv2D is a convolution layer that detects features in images. eg : Edeges,corners,shapes,pattern
+from keras.layers import Activation                #Activation function introduces non-linearity, allowing neural networks to learn complex patterns
+                                                   #Non-linearity allows neural networks to learn complex patterns that cannot be represented by straight lines.
+from keras.layers import MaxPooling2D              #Reduces image size while keeping important features.
+
+
+                                                    
+from keras.layers import Flatten                   #Converts multi-dimensional data into one dimension.
+from keras.layers import Dropout                   #Randomly turns off neurons during training to prevent overfitting.
+from keras.callbacks import ModelCheckpoint        #Automatically saves the best model during training.
+from keras.layers import Dense                     #Fully connected layer used to make final decisions.
+
+# ---------------- CREATE CNN MODEL ---------------- #
+
+model = Sequential()
+# ---- 1st Convolution Layer ----
+model.add(Conv2D(200, (3,3), input_shape=data.shape[1:]))         #200 filters, each filter size = 3×3. Input shape = (100,100,1) (grayscale image)
+model.add(Activation("relu"))
+model.add(MaxPooling2D(pool_size=(2,2)))                          #Reduces image size by half while keeping important info.
+
+
+# ---- 2nd Convolution Layer ----
+model.add(Conv2D(100,(3,3)))
+model.add(Activation("relu"))
+model.add(MaxPooling2D(pool_size=(2,2)))
+
+
+model.add(Flatten())                                                #Converts image data into 1-D array so Dense layers can use it.
+model.add(Dropout(0.3))                                             #Randomly removes 30% neurons during training to prevent overfitting
+model.add(Dense(50, activation='relu'))                             #A hidden Dense layer with 50 neurons  Learns emotion patterns.
+
+# OUTPUT LAYER FOR EMOTIONS (7 classes)
+model.add(Dense(7, activation='softmax'))                           #7 neurons → 7 emotions, softmax → gives probability for each emotion
+
+# ---------------- COMPILE MODEL ---------------- #
+#compile() tells the model HOW to learn.
+
+#Loss → Loss function measures how wrong the model’s prediction is.
+#Optimizer → how to correct the mistake.Optimizer decides how the model updates weights to reduce error.
+#Metrics → how to measure performance
+
+model.compile(loss='categorical_crossentropy',optimizer='adam',metrics=['accuracy'])    
+
+#Entropy measures uncertainty in the actual data.
+#Cross-entropy measures how wrong the model’s predictions are compared to the true labels.
+
+#--------------- SPLIT DATA ---------------- #
+
+from sklearn.model_selection import train_test_split
+
+train_data, test_data, train_target, test_target = train_test_split(data,target,test_size=0.1,random_state=42)
+
+# ---------------- CHECKPOINT ---------------- #
+
+checkpoint = ModelCheckpoint('emotion_model-{epoch:03d}.h5',monitor='val_loss',save_best_only=True)
+
+# ---------------- TRAIN MODEL ---------------- #
+
+model.fit(train_data,train_target,epochs=5,validation_split=0.2,callbacks=[checkpoint])
+
+# ---------------- EVALUATE MODEL ---------------- #
+
+print(model.evaluate(test_data, test_target))
+
+from keras.models import load_model
+import cv2
+import numpy as np
+
+# ---------------- LOAD TRAINED EMOTION MODEL ---------------- #
+
+# Load the trained emotion CNN model
+model = load_model('emotion_model-005.h5')
+
+# ---------------- LOAD FACE DETECTOR ---------------- #
+
+face_clsfr = cv2.CascadeClassifier(
+    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+)
+
+if face_clsfr.empty():
+    print("❌ Haar Cascade not loaded")
+    exit()
+else:
+    print("✅ Haar Cascade loaded")
+
+# ---------------- OPEN WEBCAM ---------------- #
+
+source = cv2.VideoCapture(0)
+
+# ✅ Emotion labels (MUST match training folder order)
+labels_dict = {
+    0: 'Angry',
+    1: 'Disgust',
+    2: 'Fear',
+    3: 'Happy',
+    4: 'Neutral',
+    5: 'Sad',
+    6: 'Surprise'
+}
+
+# Colors for different emotions
+color_dict = {
+    0: (0, 0, 255),      # Angry - Red
+    1: (128, 0, 128),    # Disgust - Purple
+    2: (255, 0, 0),      # Fear - Blue
+    3: (0, 255, 0),      # Happy - Green
+    4: (255, 255, 0),    # Neutral - Cyan
+    5: (0, 255, 255),    # Sad - Yellow
+    6: (255, 0, 255)     # Surprise - Magenta
+}
+
+# ---------------- REAL-TIME EMOTION DETECTION ---------------- #
+
+while True:
+    ret, img = source.read()
+    if not ret:
+        break
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Detect faces
+    faces = face_clsfr.detectMultiScale(gray, 1.3, 5)
+
+    for (x, y, w, h) in faces:
+
+        # Extract face ROI
+        face_img = gray[y:y+h, x:x+w]
+
+        # Resize to model input size
+        face_img = cv2.resize(face_img, (100, 100))
+
+        # Normalize
+        face_img = face_img / 255.0
+
+        # Reshape for CNN
+        face_img = face_img.reshape(1, 100, 100, 1)
+
+        # Predict emotion
+        result = model.predict(face_img, verbose=0)
+        label = np.argmax(result)
+
+        # Draw face rectangle
+        cv2.rectangle(img, (x, y), (x+w, y+h), color_dict[label], 2)
+
+        # Draw label background
+        cv2.rectangle(img, (x, y-40), (x+w, y), color_dict[label], -1)
+
+        # Put emotion text
+        cv2.putText(
+            img,
+            labels_dict[label],
+            (x, y-10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 255, 255),
+            2
+        )
+
+    # Show output
+    cv2.imshow('Emotion Detection', img)
+
+    # ESC to exit
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
+
+# ---------------- CLEANUP ---------------- #
+
+source.release()
+cv2.destroyAllWindows()
